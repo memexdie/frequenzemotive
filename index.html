@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>IL VOLTO CHE TI ASCOLTA</title>
+  <style>
+    body{margin:0;font-family:system-ui,Roboto,Arial;background:#0f1724;color:#fff;display:flex;align-items:center;justify-content:center;height:100vh;overflow:hidden}
+    .container{display:flex;flex-direction:column;align-items:center;gap:12px;width:100%;height:100%;}
+
+    .face-box{flex:1;display:flex;align-items:center;justify-content:center;overflow:hidden;width:100%;}
+    .face-box img{width:auto;height:auto;max-width:100%;max-height:100%;object-fit:contain;transition:opacity 1.5s ease;opacity:1}
+    .face-box img.fade-out{opacity:0}
+
+    .controls{display:flex;align-items:center;gap:20px;margin:10px 0}
+    .arrow{background:#222;border:none;color:#fff;padding:10px 16px;cursor:pointer;border-radius:6px;font-size:20px}
+
+    .oscilloscope-box{width:100%;max-width:640px;height:140px;background:#0b0b0b;border-radius:8px;overflow:hidden}
+    canvas{width:100%;height:100%;display:block}
+
+    .audio-controls{display:flex;align-items:center;gap:12px;margin-top:8px}
+    .volume-slider{width:140px}
+
+    .hint{font-size:13px;color:#9aa9b2;margin-top:6px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="face-box">
+      <img id="face" src="facciaseria.png" alt="Faccia">
+    </div>
+
+    <div class="controls">
+      <button class="arrow" id="prev">⟨</button>
+      <div class="oscilloscope-box"><canvas id="osc"></canvas></div>
+      <button class="arrow" id="next">⟩</button>
+    </div>
+
+    <div class="audio-controls">
+      <button id="playPause">▶️</button>
+      <label>Volume <input id="volume" class="volume-slider" type="range" min="0" max="1" step="0.01" value="1"></label>
+    </div>
+    <div class="hint">Clicca ▶️ per abilitare l'audio</div>
+
+    <audio id="player" crossorigin="anonymous"></audio>
+  </div>
+
+  <script>
+    const data = [
+      {img:"foto/facciaseria.png", audio:"audio/serio.mp3"},
+      {img:"foto/facciafelice.png", audio:"audio/felice.mp3"},
+      {img:"foto/facciatriste.png", audio:"audio/triste.mp3"},
+      {img:"foto/facciaarrabiata.png", audio:"audio/arrabiato.mp3"}
+    ];
+
+    let index = 0;
+    let isPlaying = false;
+
+    const faceEl = document.getElementById('face');
+    const prevBtn = document.getElementById('prev');
+    const nextBtn = document.getElementById('next');
+    const playPauseBtn = document.getElementById('playPause');
+    const volumeSlider = document.getElementById('volume');
+    const audioEl = document.getElementById('player');
+
+    let audioCtx = null;
+    let analyser = null;
+    let sourceNode = null;
+    let dataArray = null;
+    let bufferLength = 0;
+
+    const canvas = document.getElementById('osc');
+    const ctx = canvas.getContext('2d');
+
+    function resizeCanvas(){
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(300, Math.floor(rect.width * dpr));
+      canvas.height = Math.max(80, Math.floor(rect.height * dpr));
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.scale(dpr, dpr);
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    function initAudioIfNeeded(){
+      if(audioCtx) return;
+      try{
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 2048;
+        bufferLength = analyser.fftSize;
+        dataArray = new Uint8Array(bufferLength);
+        sourceNode = audioCtx.createMediaElementSource(audioEl);
+        sourceNode.connect(analyser);
+        analyser.connect(audioCtx.destination);
+        requestAnimationFrame(draw);
+      } catch(err){
+        console.error('Errore inizializzazione AudioContext:', err);
+      }
+    }
+
+    function draw(){
+      requestAnimationFrame(draw);
+      if(!analyser) return;
+      analyser.getByteTimeDomainData(dataArray);
+
+      const logicalWidth = canvas.width / (window.devicePixelRatio || 1);
+      const logicalHeight = canvas.height / (window.devicePixelRatio || 1);
+      ctx.clearRect(0, 0, logicalWidth, logicalHeight);
+
+      ctx.fillStyle = '#0b0b0b';
+      ctx.fillRect(0,0,logicalWidth, logicalHeight);
+
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = '#00e6c9';
+      ctx.beginPath();
+
+      const sliceWidth = logicalWidth / bufferLength;
+      let x = 0;
+      const midY = logicalHeight / 2;
+
+      for(let i=0;i<bufferLength;i++){
+        const v = (dataArray[i] - 128) / 128;
+        const y = midY + v * (logicalHeight/2) * 0.9;
+        if(i===0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+        x += sliceWidth;
+      }
+
+      ctx.lineTo(logicalWidth, midY);
+      ctx.stroke();
+    }
+
+    async function updateTrack(){
+      faceEl.classList.add("fade-out");
+      setTimeout(()=>{
+        faceEl.src = data[index].img;
+        faceEl.classList.remove("fade-out");
+      }, 850);
+
+      audioEl.pause();
+      audioEl.src = data[index].audio;
+      audioEl.load();
+
+      if(isPlaying){
+        if(audioCtx && audioCtx.state === 'suspended'){
+          try{ await audioCtx.resume(); } catch(e){ console.warn('resume failed:', e); }
+        }
+        try{
+          await audioEl.play();
+        } catch(err){
+          console.error('Errore autoplay:', err);
+          isPlaying = false;
+          updatePlayButton();
+        }
+      }
+    }
+
+    async function togglePlay(){
+      initAudioIfNeeded();
+      if(audioCtx && audioCtx.state === 'suspended'){
+        try{ await audioCtx.resume(); } catch(e){ console.warn('resume error', e); }
+      }
+
+      if(!isPlaying){
+        try{
+          await audioEl.play();
+          isPlaying = true;
+          playPauseBtn.textContent = '⏸️';
+        } catch(err){
+          console.error('play() fallito:', err);
+          isPlaying = false;
+        }
+      } else {
+        audioEl.pause();
+        isPlaying = false;
+        playPauseBtn.textContent = '▶️';
+      }
+    }
+
+    function updatePlayButton(){
+      playPauseBtn.textContent = isPlaying ? '⏸️' : '▶️';
+    }
+
+    prevBtn.addEventListener('click', async ()=>{
+      index = (index - 1 + data.length) % data.length;
+      await updateTrack();
+    });
+    nextBtn.addEventListener('click', async ()=>{
+      index = (index + 1) % data.length;
+      await updateTrack();
+    });
+
+    playPauseBtn.addEventListener('click', togglePlay);
+    volumeSlider.addEventListener('input', ()=>{ audioEl.volume = Number(volumeSlider.value); });
+
+    audioEl.addEventListener('play', ()=>{ isPlaying = true; updatePlayButton(); });
+    audioEl.addEventListener('pause', ()=>{ isPlaying = false; updatePlayButton(); });
+    audioEl.addEventListener('ended', ()=>{ isPlaying = false; updatePlayButton(); });
+    audioEl.addEventListener('error', (e)=>{ console.error('Audio element error', audioEl.error); });
+
+    (async ()=>{
+      faceEl.src = data[0].img;
+      audioEl.src = data[0].audio;
+      audioEl.load();
+      updatePlayButton();
+    })();
+  </script>
+</body>
+</html>
